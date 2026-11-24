@@ -2,9 +2,9 @@
 
 <h1 align="center">AutoSidecar</h1>
 
-Plug your iPad into your Mac with a cable and it becomes a second display. Unplug it and Sidecar stops.
+Plug your iPad into your Mac with a cable and it becomes a second display automatically. Unplug it and Sidecar stops automatically.
 
-A small menu bar app for macOS. No windows, no setup, no permissions.
+A small menu bar app for macOS.
 
 ## Install
 
