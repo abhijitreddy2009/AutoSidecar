@@ -41,6 +41,7 @@ final class AppModel {
     @ObservationIgnored private var disconnectRetries = 0
     @ObservationIgnored private var unplugCheck: Task<Void, Never>?
     @ObservationIgnored private var lastConnectAt: Date?
+    @ObservationIgnored private var retryPending = false
 
     /// A freshly plugged iPad needs a moment before Sidecar can reach it.
     private static let connectDelay: Duration = .seconds(1)
@@ -79,6 +80,13 @@ final class AppModel {
         }
         usb.start()
         display.start()
+        refreshName()
+    }
+
+    private func refreshName() {
+        Task { @MainActor in
+            if let name = await controller.iPadName() { iPadName = name }
+        }
     }
 
     func connectNow() {
@@ -126,6 +134,7 @@ final class AppModel {
         log(active ? "Sidecar on" : "Sidecar off")
         if active {
             lastError = nil
+            refreshName()
         } else {
             disconnectRetries = 0
         }
@@ -141,7 +150,6 @@ final class AppModel {
     private func send(_ event: SidecarEvent) {
         let (next, action) = SidecarReducer.reduce(state, event)
         state = next
-        iPadName = controller.connectedDeviceNames().first ?? controller.deviceNames().first ?? iPadName
         if let action { perform(action) }
     }
 
@@ -150,7 +158,10 @@ final class AppModel {
         let token = actionToken
         Task { @MainActor in
             if action == .connect { try? await Task.sleep(for: Self.connectDelay) }
-            guard token == actionToken, stillWanted(action) else { return finish(token) }
+            guard token == actionToken, stillWanted(action) else {
+                log("Skipped \(action == .connect ? "connect" : "disconnect"): token \(token == actionToken ? "current" : "stale"), active \(display.isSidecarActive), cable \(state.cablePresent)")
+                return finish(token)
+            }
             log(action == .connect ? "Connecting" : "Disconnecting")
             if action == .connect { lastConnectAt = Date() }
             var result = await controller.setSidecar(on: action == .connect)
@@ -202,12 +213,16 @@ final class AppModel {
         }
     }
 
+    /// One failed attempt can be reported twice (the error and the screen disappearing): retry once.
     private func retryConnect(token: Int) {
-        guard connectRetries < 3 else { return }
+        guard connectRetries < 3, !retryPending else { return }
+        retryPending = true
         connectRetries += 1
         log("Retrying connection (\(connectRetries)/3)")
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(3))
+            retryPending = false
+            log("Retry firing (token \(token == actionToken ? "current" : "stale"), active \(display.isSidecarActive))")
             guard token == actionToken else { return }
             send(.connectFailed)
         }
