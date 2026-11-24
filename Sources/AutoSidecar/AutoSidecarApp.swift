@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 @main
-struct SidecarAutoApp: App {
+struct AutoSidecarApp: App {
     @State private var model = AppModel()
 
     var body: some Scene {
@@ -40,7 +40,7 @@ private struct MenuContent: View {
 
         Divider()
 
-        Button("Quit Sidecar Auto") { NSApp.terminate(nil) }
+        Button("Quit AutoSidecar") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
     }
 }

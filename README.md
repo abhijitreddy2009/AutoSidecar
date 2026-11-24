@@ -1,4 +1,6 @@
-# Sidecar Auto
+<p align="center"><img src="Resources/AppIcon.png" width="128" alt=""></p>
+
+<h1 align="center">AutoSidecar</h1>
 
 Plug your iPad into your Mac with a cable and it becomes a second display. Unplug it and Sidecar stops.
 
@@ -6,12 +8,12 @@ A small menu bar app for macOS. No windows, no setup, no permissions.
 
 ## Install
 
-1. Download `SidecarAuto-x.y.z.zip` from [Releases](https://github.com/abhijitreddy2009/SidecarAuto/releases/latest) and unzip it.
-2. Move **Sidecar Auto.app** to `/Applications`.
+1. Download `AutoSidecar-x.y.z.zip` from [Releases](https://github.com/abhijitreddy2009/AutoSidecar/releases/latest) and unzip it.
+2. Move **AutoSidecar.app** to `/Applications`.
 3. The app isn't notarized, so macOS blocks it the first time. Either right-click the app → **Open** → **Open**, or run:
 
    ```sh
-   xattr -dr com.apple.quarantine "/Applications/Sidecar Auto.app"
+   xattr -dr com.apple.quarantine "/Applications/AutoSidecar.app"
    ```
 
 An iPad icon appears in the menu bar. Turn on **Launch at Login** from its menu if you want it running all the time.
@@ -30,7 +32,7 @@ Disconnect
 ✓ Connect Automatically
   Launch at Login
 ──────────────────
-Quit Sidecar Auto
+Quit AutoSidecar
 ```
 
 - **Connect Automatically** off: the app does nothing until you press **Connect**.
@@ -67,11 +69,12 @@ Details that came from testing on real hardware:
 Needs Xcode 16 or later (Swift 6 toolchain).
 
 ```sh
-git clone https://github.com/abhijitreddy2009/SidecarAuto.git
-cd SidecarAuto
+git clone https://github.com/abhijitreddy2009/AutoSidecar.git
+cd AutoSidecar
 swift test                 # state machine tests
 ./bundle.sh --install      # build and copy to /Applications
 ./bundle.sh --release      # universal zip for a GitHub release
+swift tools/make-icon.swift # redraw the app icon
 ```
 
 ## Troubleshooting
@@ -79,7 +82,7 @@ swift test                 # state machine tests
 See what the app is doing:
 
 ```sh
-log stream --predicate 'subsystem == "io.github.abhijitreddy2009.SidecarAuto"'
+log stream --predicate 'subsystem == "io.github.abhijitreddy2009.AutoSidecar"'
 ```
 
 - **"iPad not available"**: unlock the iPad, check that both devices use the same Apple Account, and turn on Bluetooth and Handoff on both.

@@ -2,11 +2,11 @@
 import PackageDescription
 
 let package = Package(
-    name: "SidecarAuto",
+    name: "AutoSidecar",
     platforms: [.macOS(.v14)],
     targets: [
         .target(name: "SidecarCore"),
-        .executableTarget(name: "SidecarAuto", dependencies: ["SidecarCore"]),
+        .executableTarget(name: "AutoSidecar", dependencies: ["SidecarCore"]),
         .testTarget(name: "SidecarCoreTests", dependencies: ["SidecarCore"]),
     ],
     swiftLanguageModes: [.v5]

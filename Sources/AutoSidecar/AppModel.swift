@@ -31,7 +31,7 @@ final class AppModel {
         }
     }
 
-    @ObservationIgnored private let logger = Logger(subsystem: "io.github.abhijitreddy2009.SidecarAuto", category: "app")
+    @ObservationIgnored private let logger = Logger(subsystem: "io.github.abhijitreddy2009.AutoSidecar", category: "app")
     @ObservationIgnored private let usb = USBMonitor()
     @ObservationIgnored private let display = DisplayObserver()
     @ObservationIgnored private let controller = SidecarController()
@@ -42,6 +42,8 @@ final class AppModel {
     @ObservationIgnored private var unplugCheck: Task<Void, Never>?
     @ObservationIgnored private var lastConnectAt: Date?
     @ObservationIgnored private var retryPending = false
+    /// While true, state is recorded but nothing is acted on: launch reports cable and screen one at a time.
+    @ObservationIgnored private var launching = true
 
     /// A freshly plugged iPad needs a moment before Sidecar can reach it.
     private static let connectDelay: Duration = .seconds(1)
@@ -78,8 +80,10 @@ final class AppModel {
         display.onChange = { [weak self] active in
             MainActor.assumeIsolated { self?.displayChanged(active: active) }
         }
-        usb.start()
         display.start()
+        usb.start()
+        launching = false
+        send(.reevaluate)
         refreshName()
     }
 
@@ -148,7 +152,11 @@ final class AppModel {
     }
 
     private func send(_ event: SidecarEvent) {
-        let (next, action) = SidecarReducer.reduce(state, event)
+        var (next, action) = SidecarReducer.reduce(state, event)
+        if launching, action != nil {
+            next.inFlight = nil
+            action = nil
+        }
         state = next
         if let action { perform(action) }
     }
@@ -228,7 +236,7 @@ final class AppModel {
         }
     }
 
-    /// `log stream --predicate 'subsystem == "io.github.abhijitreddy2009.SidecarAuto"'`
+    /// `log stream --predicate 'subsystem == "io.github.abhijitreddy2009.AutoSidecar"'`
     private func log(_ message: String) {
         logger.log("\(message, privacy: .public)")
     }
