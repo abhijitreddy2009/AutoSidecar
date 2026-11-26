@@ -41,9 +41,16 @@ final class AppModel {
     @ObservationIgnored private var disconnectRetries = 0
     @ObservationIgnored private var unplugCheck: Task<Void, Never>?
     @ObservationIgnored private var lastConnectAt: Date?
+    @ObservationIgnored private var sessionStartedAt: Date?
+    @ObservationIgnored private var pluggedInAt: Date?
     @ObservationIgnored private var retryPending = false
     /// While true, state is recorded but nothing is acted on: launch reports cable and screen one at a time.
     @ObservationIgnored private var launching = true
+    /// Mac asleep, screens off or session locked/switched away: Sidecar can't run, so don't try.
+    @ObservationIgnored private var paused = false
+    @ObservationIgnored private var lastPowerEventAt: Date?
+    @ObservationIgnored private var resumeTask: Task<Void, Never>?
+    @ObservationIgnored private var powerObservers: [NSObjectProtocol] = []
 
     /// A freshly plugged iPad needs a moment before Sidecar can reach it.
     private static let connectDelay: Duration = .seconds(1)
@@ -80,11 +87,66 @@ final class AppModel {
         display.onChange = { [weak self] active in
             MainActor.assumeIsolated { self?.displayChanged(active: active) }
         }
+        // A menu bar app has no windows, so macOS would otherwise consider it idle and quit it.
+        ProcessInfo.processInfo.disableAutomaticTermination("Watching for the iPad cable")
+        observePower()
         display.start()
         usb.start()
         launching = false
         send(.reevaluate)
         refreshName()
+    }
+
+    // MARK: - Sleep, wake, screen lock
+
+    /// Seen on real hardware: display sleep ends the Sidecar session while the iPad stays on the cable.
+    /// Without this, that looked like the user turning Sidecar off, and it never came back.
+    private func observePower() {
+        let center = NSWorkspace.shared.notificationCenter
+        let pausing: [Notification.Name] = [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification,
+                                            NSWorkspace.sessionDidResignActiveNotification]
+        let resuming: [Notification.Name] = [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification,
+                                             NSWorkspace.sessionDidBecomeActiveNotification]
+        for name in pausing {
+            powerObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                MainActor.assumeIsolated { self?.systemPaused(note.name) }
+            })
+        }
+        for name in resuming {
+            powerObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                MainActor.assumeIsolated { self?.systemResumed(note.name) }
+            })
+        }
+    }
+
+    private func systemPaused(_ name: Notification.Name) {
+        paused = true
+        lastPowerEventAt = Date()
+        resumeTask?.cancel()
+        log("Paused: \(name.rawValue)")
+    }
+
+    private func systemResumed(_ name: Notification.Name) {
+        paused = false
+        lastPowerEventAt = Date()
+        log("Resumed: \(name.rawValue)")
+        scheduleResume()
+    }
+
+    /// Give the iPad and the Sidecar service a moment after wake, then reconnect if the cable is in.
+    private func scheduleResume() {
+        resumeTask?.cancel()
+        resumeTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled, !paused else { return }
+            connectRetries = 0
+            lastError = nil
+            send(.systemResumed)
+        }
+    }
+
+    private var endedBySystem: Bool {
+        paused || lastPowerEventAt.map { Date().timeIntervalSince($0) < 30 } ?? false
     }
 
     private func refreshName() {
@@ -114,23 +176,37 @@ final class AppModel {
             log("\(present.productName) plugged in · \(present.speed.label)")
             connectRetries = 0
             lastError = nil
+            pluggedInAt = Date()
             send(.cableAttached)
         } else if present == nil, wasPresent {
-            confirmUnplug()
+            if inSessionStartWindow {
+                confirmUnplug()
+            } else {
+                unplugged()
+            }
         }
     }
 
-    /// Starting wired Sidecar makes the iPad drop off USB for ~150 ms and come back.
-    /// Only treat it as unplugged if it stays gone, or that blink would end the new session.
+    /// The iPad briefly drops off USB (~150 ms) just after it's plugged in and again when wired
+    /// Sidecar starts. Only in those first seconds is a USB disappearance ambiguous; any other
+    /// time it's a real unplug and Sidecar is told to disconnect at once.
+    private var inSessionStartWindow: Bool {
+        [pluggedInAt, lastConnectAt, sessionStartedAt].contains { $0.map { Date().timeIntervalSince($0) < 5 } ?? false }
+    }
+
     private func confirmUnplug() {
         unplugCheck?.cancel()
         unplugCheck = Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled, !appleDevices.values.contains(where: DeviceMatcher.isIPad) else { return }
-            log("iPad unplugged")
-            cabledIPad = nil
-            send(.cableDetached)
+            unplugged()
         }
+    }
+
+    private func unplugged() {
+        log("iPad unplugged")
+        cabledIPad = nil
+        send(.cableDetached)
     }
 
     private func displayChanged(active: Bool) {
@@ -138,11 +214,18 @@ final class AppModel {
         log(active ? "Sidecar on" : "Sidecar off")
         if active {
             lastError = nil
+            sessionStartedAt = Date()
             refreshName()
         } else {
             disconnectRetries = 0
         }
+        let weDisconnected = state.inFlight == .disconnect
         send(active ? .sidecarAppeared : .sidecarDisappeared)
+        if !active, state.cablePresent, endedBySystem, !weDisconnected {
+            log("Session ended by sleep or lock, will reconnect")
+            if !paused { scheduleResume() } // otherwise wake/unlock triggers it
+            return
+        }
         // Starting wired Sidecar can reset the iPad's USB link, and macOS then drops the new session
         // (SidecarErrorDomain -101) within a second. That's a failed attempt, not the user's choice.
         if !active, state.cablePresent, let started = lastConnectAt, Date().timeIntervalSince(started) < 10 {
@@ -173,8 +256,9 @@ final class AppModel {
             log(action == .connect ? "Connecting" : "Disconnecting")
             if action == .connect { lastConnectAt = Date() }
             var result = await controller.setSidecar(on: action == .connect)
-            // The iPad can take a few seconds to become available after plugging in.
-            for _ in 0..<2 {
+            // The iPad can take a while to become available after plugging in, waking or logging in
+            // (the Sidecar service starts late at login): keep trying for about a minute.
+            for _ in 0..<20 {
                 guard case .failure(.iPadNotListed) = result, action == .connect else { break }
                 try? await Task.sleep(for: .seconds(3))
                 guard token == actionToken, stillWanted(action) else { return finish(token) }
@@ -197,7 +281,7 @@ final class AppModel {
     private func stillWanted(_ action: SidecarAction) -> Bool {
         let active = display.isSidecarActive
         switch action {
-        case .connect: return !active && state.cablePresent
+        case .connect: return !active && state.cablePresent && !paused
         case .disconnect: return active
         }
     }

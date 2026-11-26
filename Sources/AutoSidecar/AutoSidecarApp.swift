@@ -5,6 +5,14 @@ import SwiftUI
 struct AutoSidecarApp: App {
     @State private var model = AppModel()
 
+    init() {
+        // Two copies would both react to every plug and fight over the session.
+        let bundleID = Bundle.main.bundleIdentifier ?? ""
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .filter { $0 != NSRunningApplication.current }
+        if !others.isEmpty { exit(0) }
+    }
+
     var body: some Scene {
         MenuBarExtra {
             MenuContent(model: model)

@@ -30,6 +30,9 @@ public enum SidecarEvent: Equatable, Sendable {
     case reevaluate
     /// macOS reported the connect failed (session may have flashed up then dropped): not a user choice, retry.
     case connectFailed
+    /// The Mac woke, its screens came back or the user unlocked it. A session that ended meanwhile
+    /// was ended by the system, not the user, so reconnect if the cable is in.
+    case systemResumed
     case manualConnect, manualDisconnect
 }
 
@@ -66,6 +69,8 @@ public enum SidecarReducer {
         case .connectFailed:
             next.suppressed = false
             if next.inFlight == .connect { next.inFlight = nil }
+        case .systemResumed:
+            next.suppressed = false
         case .manualConnect:
             next.suppressed = false
             let wiredBlocked = next.strictWired && !next.cablePresent

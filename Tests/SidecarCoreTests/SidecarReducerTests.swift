@@ -43,6 +43,18 @@ final class SidecarReducerTests: XCTestCase {
         XCTAssertFalse(state.suppressed)
     }
 
+    func testSessionEndedBySleepReconnectsOnWake() {
+        // Real trace: display sleep ended the session while the iPad stayed on the cable.
+        let (state, actions) = run([.cableAttached, .sidecarAppeared, .sidecarDisappeared, .systemResumed])
+        XCTAssertEqual(actions, [.connect, nil, nil, .connect])
+        XCTAssertFalse(state.suppressed)
+    }
+
+    func testWakeWithoutCableDoesNothing() {
+        let (_, actions) = run([.systemResumed])
+        XCTAssertEqual(actions, [nil])
+    }
+
     func testFailedDisconnectCanBeRetried() {
         let (state, actions) = run([.cableAttached, .sidecarAppeared, .cableDetached, .actionFinished, .reevaluate])
         XCTAssertEqual(actions, [.connect, nil, .disconnect, nil, .disconnect])
